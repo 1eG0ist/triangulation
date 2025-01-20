@@ -2,11 +2,14 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:triangulation/components/tower_widget.dart';
 import 'package:triangulation/components/user_widget.dart';
 import 'package:triangulation/models/tower_model.dart';
 import 'package:triangulation/models/user_model.dart';
 import 'package:triangulation/utils/lines_painter.dart';
+import 'package:triangulation/errors/infinity_user_position_error.dart';
+import 'package:triangulation/errors/zero_division_error.dart';
 
 class WorldMapPage extends StatefulWidget {
   @override
@@ -58,74 +61,231 @@ class _WorldMapPageState extends State<WorldMapPage> {
         radiusController.clear();
       });
 
-      if (towers.length >= 3) {
-        if (_isTriangulationPossible()) {
-          user = triangulateUserPosition(towers[0].position, towers[1].position, towers[2].position,
-              towers[0].distanceToUser, towers[1].distanceToUser, towers[2].distanceToUser);
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Triangulation not possible with given distances')),
-          );
-        }
-      }
+      checkSituationOnAddingTower();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invalid input! Please enter valid numbers.')),
-      );
+      _showSnackBar('Invalid input! Please enter valid numbers.');
     }
+  }
+
+  void checkSituationOnAddingTower() {
+    if (towers.length >= 3) {
+      if (_isTriangulationPossible()) {
+        user = triangulateUserPosition(towers[0].position, towers[1].position, towers[2].position,
+            towers[0].distanceToUser, towers[1].distanceToUser, towers[2].distanceToUser);
+      } else {
+        _showSnackBar('Triangulation not possible with given distances');
+      }
+    }
+  }
+
+  bool _isTriangulationPossible() {
+    double d1 = towers[0].distanceToUser;
+    double d2 = towers[1].distanceToUser;
+    double d3 = towers[2].distanceToUser;
+    double side1 = _calculateDistance(towers[0].position, towers[1].position);
+    double side2 = _calculateDistance(towers[1].position, towers[2].position);
+    double side3 = _calculateDistance(towers[2].position, towers[0].position);
+
+    return (d1 + d2 > side1) && (d2 + d3 > side2) && (d3 + d1 > side3);
+  }
+
+  void enterDefaultTowers() {
+    setState(() {
+      towers.add(
+          TowerModel(
+              position: Offset(50, 50),
+              signalPower: 10,
+              radius: 200,
+              distanceToUser: 70,
+          )
+      );
+      towers.add(
+          TowerModel(
+            position: Offset(200, 50),
+            signalPower: 20,
+            radius: 250,
+            distanceToUser: 100,
+          )
+      );
+      towers.add(
+          TowerModel(
+            position: Offset(100, 200),
+            signalPower: 30,
+            radius: 300,
+            distanceToUser: 120,
+          )
+      );
+    });
+    checkSituationOnAddingTower();
+  }
+
+  double _calculateDistance(Offset point1, Offset point2) {
+    return sqrt(pow(point2.dx - point1.dx, 2) + pow(point2.dy - point1.dy, 2));
+  }
+
+  double _calculateSignalPower(double distance) {
+    return min(1000, 100 / (distance * distance));
+  }
+
+  void _updateUserPosition(Offset newPosition) {
+    setState(() {
+      user!.data.coords = newPosition;
+      for (var tower in towers) {
+        tower.distanceToUser = _calculateDistance(tower.position, newPosition);
+        tower.signalPower = _calculateSignalPower(tower.distanceToUser);
+      }
+      _checkCoverage();
+    });
+  }
+
+  void _checkCoverage() {
+    if (_isInCoverage()) {
+      if (isFreeMode) {
+        isFreeMode = false;
+        _showSnackBar('User is back in coverage area.');
+      }
+    } else {
+      if (!isFreeMode) {
+        isFreeMode = true;
+        _showSnackBar('User is out of coverage area.');
+      }
+    }
+  }
+
+  bool _isInCoverage() {
+    for (var tower in towers) {
+      if (_calculateDistance(tower.position, user!.data.coords) > tower.radius) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool _isPointWithinAllTowers(Offset point) {
+    for (var tower in towers) {
+      if (_calculateDistance(tower.position, point) > tower.radius) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  UserWidget triangulateUserPosition(Offset tower1, Offset tower2, Offset tower3, double distance1, double distance2, double distance3) {
+    double x1 = tower1.dx;
+    double y1 = tower1.dy;
+    double x2 = tower2.dx;
+    double y2 = tower2.dy;
+    double x3 = tower3.dx;
+    double y3 = tower3.dy;
+
+    double A = 2 * (x2 - x1);
+    double B = 2 * (y2 - y1);
+    double C = distance1 * distance1 - distance2 * distance2 - x1 * x1 - y1 * y1 + x2 * x2 + y2 * y2;
+    double D = 2 * (x3 - x2);
+    double E = 2 * (y3 - y2);
+    double F = distance2 * distance2 - distance3 * distance3 - x2 * x2 - y2 * y2 + x3 * x3 + y3 * y3;
+
+    double denominator = (E * A - B * D);
+    if (denominator == 0) {
+      throw ZeroDivisionError(message: "0 denominator");
+    }
+
+    double x = (C * E - F * B) / denominator;
+    double y = (C * D - A * F) / (B * D - A * E);
+
+    if (x.isInfinite || y.isInfinite || x.isNaN || y.isNaN) {
+      throw InfinityUserPositionError(message: "Infinity exception");
+    }
+
+    return UserWidget(data: UserModel(coords: Offset(x, y)));
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Triangulation Example'),
+        title: const Text('Triangulation Example'),
       ),
       endDrawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
           children: <Widget>[
             DrawerHeader(
-              child: Text('Input Coordinates'),
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 color: Colors.blue,
+              ),
+              child: Column(
+                children: [
+                  const Text('Input Coordinates'),
+                  OutlinedButton(
+                    onPressed: enterDefaultTowers,
+                    child: const Text(
+                      "Enter default towers",
+                      style: TextStyle(
+                        color: Colors.black
+                      ),
+                    )
+                  )
+                ],
               ),
             ),
             if (towers.length >= 3)
               Column(
                 children: [
-                  Text('User Position'),
+                  const Text('User Position'),
                   Text('X: ${user?.data.coords.dx ?? 'N/A'}'),
                   Text('Y: ${user?.data.coords.dy ?? 'N/A'}'),
                 ],
               ),
             ListTile(
-              title: Text('Create Tower'),
+              title: const Text('Create Tower'),
               subtitle: Column(
                 children: [
                   TextField(
                     controller: towerXController,
                     keyboardType: TextInputType.number,
-                    decoration: InputDecoration(labelText: 'X'),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                    ],
+                    decoration: const InputDecoration(labelText: 'X'),
                   ),
                   TextField(
                     controller: towerYController,
                     keyboardType: TextInputType.number,
-                    decoration: InputDecoration(labelText: 'Y'),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                    ],
+                    decoration: const InputDecoration(labelText: 'Y'),
                   ),
                   TextField(
                     controller: signalPowerController,
                     keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                    ],
                     decoration: const InputDecoration(labelText: 'Signal Power'),
                   ),
                   TextField(
                     controller: radiusController,
                     keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                    ],
                     decoration: const InputDecoration(labelText: 'Radius'),
                   ),
                   TextField(
                     controller: distanceToUserController,
                     keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                    ],
                     decoration: const InputDecoration(labelText: 'Distance to User'),
                   ),
                   ElevatedButton(
@@ -138,6 +298,17 @@ class _WorldMapPageState extends State<WorldMapPage> {
             ...towers.map((tower) => ListTile(
               title: Text('Tower at (${tower.position.dx}, ${tower.position.dy})'),
               subtitle: Text('Signal Power: ${tower.signalPower}, Distance to User: ${tower.distanceToUser}'),
+              trailing: IconButton(
+                icon: Icon(Icons.close),
+                onPressed: () {
+                  setState(() {
+                    towers.remove(tower);
+                    if (towers.length < 3) {
+                      user = null; // Сбрасываем позицию пользователя, если вышек меньше 3
+                    }
+                  });
+                },
+              ),
             )).toList(),
           ],
         ),
@@ -192,19 +363,24 @@ class _WorldMapPageState extends State<WorldMapPage> {
                       _checkCoverage();
                       if (towers.length >= 3) {
                         if (_isTriangulationPossible()) {
-                          user = triangulateUserPosition(towers[0].position, towers[1].position, towers[2].position,
+                          UserWidget newUserWidget = triangulateUserPosition(towers[0].position, towers[1].position, towers[2].position,
                               towers[0].distanceToUser, towers[1].distanceToUser, towers[2].distanceToUser);
+                          if (_isPointWithinAllTowers(newUserWidget.data.coords)) {
+                            user!.data.coords = newUserWidget.data.coords;
+                          } else {
+                            _showSnackBar('User out of coverage area, not set new position');
+                          }
                         } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Triangulation not possible with given distances')),
-                          );
+                          _showSnackBar('Triangulation not possible with given distances');
                         }
                       }
                     });
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Error, something went wrong, mb tower or device out of map')),
-                    );
+                  } on ZeroDivisionError catch (e) {
+                    _showSnackBar(e.message);
+                  } on InfinityUserPositionError catch(e) {
+                    _showSnackBar(e.message);
+                  } catch(e) {
+                    _showSnackBar("Error, something went wrong, try to reload page or app");
                   }
                 },
                 child: TowerWidget(data: tower),
@@ -223,9 +399,7 @@ class _WorldMapPageState extends State<WorldMapPage> {
                       user!.data.coords.dy + details.delta.dy,
                     ));
                   } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Error, something went wrong, mb tower or device out of map')),
-                    );
+                    _showSnackBar('Error, something went wrong, mb tower or device out of map');
                   }
                 },
                 child: UserWidget(data: user!.data),
@@ -234,85 +408,5 @@ class _WorldMapPageState extends State<WorldMapPage> {
         ],
       ),
     );
-  }
-
-  bool _isTriangulationPossible() {
-    double d1 = towers[0].distanceToUser;
-    double d2 = towers[1].distanceToUser;
-    double d3 = towers[2].distanceToUser;
-    double side1 = _calculateDistance(towers[0].position, towers[1].position);
-    double side2 = _calculateDistance(towers[1].position, towers[2].position);
-    double side3 = _calculateDistance(towers[2].position, towers[0].position);
-
-    return (d1 + d2 > side1) && (d2 + d3 > side2) && (d3 + d1 > side3);
-  }
-
-  double _calculateDistance(Offset point1, Offset point2) {
-    return sqrt(pow(point2.dx - point1.dx, 2) + pow(point2.dy - point1.dy, 2));
-  }
-
-  double _calculateSignalPower(double distance) {
-    // Пример формулы для расчета signalPower на основе расстояния
-    // Это упрощенный пример, в реальном приложении используйте более точные методы
-    return 100 / (distance * distance);
-  }
-
-  void _updateUserPosition(Offset newPosition) {
-    setState(() {
-      user!.data.coords = newPosition;
-      for (var tower in towers) {
-        tower.distanceToUser = _calculateDistance(tower.position, newPosition);
-        tower.signalPower = _calculateSignalPower(tower.distanceToUser);
-      }
-      _checkCoverage();
-    });
-  }
-
-  void _checkCoverage() {
-    if (_isInCoverage()) {
-      if (isFreeMode) {
-        isFreeMode = false;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('User is back in coverage area.')),
-        );
-      }
-    } else {
-      if (!isFreeMode) {
-        isFreeMode = true;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('User is out of coverage area.')),
-        );
-      }
-    }
-  }
-
-  bool _isInCoverage() {
-    for (var tower in towers) {
-      if (_calculateDistance(tower.position, user!.data.coords) > tower.radius) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  UserWidget triangulateUserPosition(Offset tower1, Offset tower2, Offset tower3, double distance1, double distance2, double distance3) {
-    double x1 = tower1.dx;
-    double y1 = tower1.dy;
-    double x2 = tower2.dx;
-    double y2 = tower2.dy;
-    double x3 = tower3.dx;
-    double y3 = tower3.dy;
-
-    double A = 2 * (x2 - x1);
-    double B = 2 * (y2 - y1);
-    double C = distance1 * distance1 - distance2 * distance2 - x1 * x1 - y1 * y1 + x2 * x2 + y2 * y2;
-    double D = 2 * (x3 - x2);
-    double E = 2 * (y3 - y2);
-    double F = distance2 * distance2 - distance3 * distance3 - x2 * x2 - y2 * y2 + x3 * x3 + y3 * y3;
-
-    double x = (C * E - F * B) / (E * A - B * D);
-    double y = (C * D - A * F) / (B * D - A * E);
-
-    return UserWidget(data: UserModel(coords: Offset(x, y)));
   }
 }
