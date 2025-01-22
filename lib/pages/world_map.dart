@@ -19,14 +19,28 @@ class WorldMapPage extends StatefulWidget {
 class _WorldMapPageState extends State<WorldMapPage> {
   List<TowerModel> towers = [];
   UserWidget? user;
+
+  /*
+  * free mode - состояние устройства, когда пользователь сам вытянул его из
+  * области треангуляции.
+  *
+  * Переход из свободного состояния возможен только в случае если пользователь
+  * поместит устройство обратно в зону треангуляции
+  * */
   bool isFreeMode = false;
 
+  /*
+  * Контроллеры ввода значений новой вышки
+  * */
   final TextEditingController towerXController = TextEditingController();
   final TextEditingController towerYController = TextEditingController();
   final TextEditingController signalPowerController = TextEditingController();
   final TextEditingController distanceToUserController = TextEditingController();
   final TextEditingController radiusController = TextEditingController();
 
+  /*
+  * Инициализируем начальное состояние
+  * */
   @override
   void initState() {
     super.initState();
@@ -37,6 +51,13 @@ class _WorldMapPageState extends State<WorldMapPage> {
     });
   }
 
+  /*
+  * Добавление вышки
+  * 1. Парсит данные из контроллеров, которые подключены к полям ввода
+  * 2. Очищает данные контроллеры после удаления
+  * 3. Инициализирует пересчет состояния учитывая новые данные вызовом функции [checkSituationOnAddingTower]
+  * 4. В случае ошибки уведомляет об этом пользователя
+  * */
   void _addTower() {
     try {
       final double x = double.parse(towerXController.text);
@@ -67,6 +88,10 @@ class _WorldMapPageState extends State<WorldMapPage> {
     }
   }
 
+  /*
+  * Если позиция пользователя может быть рассчитана, то она рассчитывается
+  * и присваивается пользователю
+  * */
   void checkSituationOnAddingTower() {
     if (towers.length >= 3) {
       if (_isTriangulationPossible()) {
@@ -78,6 +103,9 @@ class _WorldMapPageState extends State<WorldMapPage> {
     }
   }
 
+  /*
+  * Проверяет возможность рассчета позиции пользователя
+  * */
   bool _isTriangulationPossible() {
     double d1 = towers[0].distanceToUser;
     double d2 = towers[1].distanceToUser;
@@ -89,6 +117,9 @@ class _WorldMapPageState extends State<WorldMapPage> {
     return (d1 + d2 > side1) && (d2 + d3 > side2) && (d3 + d1 > side3);
   }
 
+  /*
+  * Добавляет стандартные вышки, при которых позиция пользователя может быть рассчитана
+  * */
   void enterDefaultTowers() {
     setState(() {
       towers.add(
@@ -119,17 +150,29 @@ class _WorldMapPageState extends State<WorldMapPage> {
     checkSituationOnAddingTower();
   }
 
+  /*
+  * Высчитывает дистанцию между двумя точками координат с помощью Т. Пифагора
+  * */
   double _calculateDistance(Offset point1, Offset point2) {
     return sqrt(pow(point2.dx - point1.dx, 2) + pow(point2.dy - point1.dy, 2));
   }
 
+  /*
+  * Рассчитывает силу сигнала исходя из дистанции
+  * */
   double _calculateSignalPower(double distance) {
     return min(1000, 100 / (distance * distance));
   }
 
+  /*
+  * Обновлене позиции пользователя
+  * */
   void _updateUserPosition(Offset newPosition) {
     setState(() {
       user!.data.coords = newPosition;
+      /*
+      * При обновлении позиции пересчитывается расстояние до каждой вышки
+      * */
       for (var tower in towers) {
         tower.distanceToUser = _calculateDistance(tower.position, newPosition);
         tower.signalPower = _calculateSignalPower(tower.distanceToUser);
@@ -138,6 +181,9 @@ class _WorldMapPageState extends State<WorldMapPage> {
     });
   }
 
+  /*
+  * Оповещение пользователя о состоянии в котором находится устройство в данный момент
+  * */
   void _checkCoverage() {
     if (_isInCoverage()) {
       if (isFreeMode) {
@@ -152,6 +198,9 @@ class _WorldMapPageState extends State<WorldMapPage> {
     }
   }
 
+  /*
+  * Проверка нахождения устройства в пределах радиуса покрытия вышек
+  * */
   bool _isInCoverage() {
     for (var tower in towers) {
       if (_calculateDistance(tower.position, user!.data.coords) > tower.radius) {
@@ -161,6 +210,9 @@ class _WorldMapPageState extends State<WorldMapPage> {
     return true;
   }
 
+  /*
+  * Проверка нахождения точки в пределах радиуса покрытия вышек
+  * */
   bool _isPointWithinAllTowers(Offset point) {
     for (var tower in towers) {
       if (_calculateDistance(tower.position, point) > tower.radius) {
@@ -170,6 +222,9 @@ class _WorldMapPageState extends State<WorldMapPage> {
     return true;
   }
 
+  /*
+  * Высчитываение позиции пользователя
+  * */
   UserWidget triangulateUserPosition(Offset tower1, Offset tower2, Offset tower3, double distance1, double distance2, double distance3) {
     double x1 = tower1.dx;
     double y1 = tower1.dy;
@@ -200,6 +255,9 @@ class _WorldMapPageState extends State<WorldMapPage> {
     return UserWidget(data: UserModel(coords: Offset(x, y)));
   }
 
+  /*
+  * Показ информации пользователю с закрытием предыдущего уведомления
+  * */
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -207,6 +265,9 @@ class _WorldMapPageState extends State<WorldMapPage> {
     );
   }
 
+  /*
+  * Интерфейс
+  * */
   @override
   Widget build(BuildContext context) {
     return Scaffold(

@@ -43,7 +43,9 @@ class LinesPainter extends CustomPainter {
 
     }
   }
-
+  /*
+  * Рисуем пунктирные линии от точки к точке
+  * */
   void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {
     try {
       final double dashWidth = 5.0;
